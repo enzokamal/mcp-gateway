@@ -1,0 +1,265 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-gateway-adapter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpgateway
+  namespace: mcp-gateway-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcpgateway
+  template:
+    metadata:
+      labels:
+        app: mcpgateway
+    spec:
+      serviceAccountName: mcpgateway-sa
+      containers:
+        - name: mcpgateway-container
+          # image: ghcr.io/microsoft/mcpgateway-service:latest
+          # image: kamalberrybytes/mcp:1.0.0
+          image: kamalberrybytes/microsoft-mcpgateway-service
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Development"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          envFrom:
+            - configMapRef:
+                name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpgateway-service
+  namespace: mcp-gateway-adapter
+spec:
+  selector:
+    app: mcpgateway
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcpgateway-sa
+  namespace: mcp-gateway-adapter
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workload-sa
+  namespace: mcp-gateway-adapter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-manager
+  namespace: mcp-gateway-adapter
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "pods"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-manager-binding
+  namespace: mcp-gateway-adapter
+subjects:
+  - kind: ServiceAccount
+    name: mcpgateway-sa
+    namespace: mcp-gateway-adapter
+roleRef:
+  kind: Role
+  name: app-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: toolgateway
+  namespace: mcp-gateway-adapter
+spec:
+  serviceName: toolgateway-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: toolgateway
+  template:
+    metadata:
+      labels:
+        app: toolgateway
+        mcp-gateway-adapter/type: "mcp"
+    spec:
+      serviceAccountName: mcpgateway-sa
+      containers:
+        - name: toolgateway-container
+          image: kamalberrybytes/microsoft-mcpgateway-tools
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Development"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          envFrom:
+            - configMapRef:
+                name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: toolgateway-service
+  namespace: mcp-gateway-adapter
+spec:
+  clusterIP: "None"
+  selector:
+    app: toolgateway
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: mcp-gateway-adapter
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP
+  selector:
+    app: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: mcp-gateway-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data  # default redis data path
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+  namespace: mcp-gateway-adapter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: mcp-gateway-adapter
+data:
+  ContainerRegistrySettings__Endpoint: "kamalberrybytes"
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: app-manager-cluster
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "pods"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: app-manager-cluster-binding
+subjects:
+  - kind: ServiceAccount
+    name: mcpgateway-sa
+    namespace: mcp-gateway-adapter
+roleRef:
+  kind: ClusterRole
+  name: app-manager-cluster
+  apiGroup: rbac.authorization.k8s.io
+
+
