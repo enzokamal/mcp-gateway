@@ -1,13 +1,14 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: mcp-gateway-adapter
+  name: adapter
 ---
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mcpgateway
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   replicas: 1
   selector:
@@ -45,7 +46,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mcpgateway-service
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   selector:
     app: mcpgateway
@@ -58,19 +59,19 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: mcpgateway-sa
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: workload-sa
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: app-manager
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
@@ -86,11 +87,11 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: app-manager-binding
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 subjects:
   - kind: ServiceAccount
     name: mcpgateway-sa
-    namespace: mcp-gateway-adapter
+    namespace: adapter
 roleRef:
   kind: Role
   name: app-manager
@@ -100,7 +101,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: toolgateway
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   serviceName: toolgateway-service
   replicas: 1
@@ -111,7 +112,7 @@ spec:
     metadata:
       labels:
         app: toolgateway
-        mcp-gateway-adapter/type: "mcp"
+        adapter/type: "mcp"
     spec:
       serviceAccountName: mcpgateway-sa
       containers:
@@ -138,7 +139,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: toolgateway-service
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   clusterIP: "None"
   selector:
@@ -152,7 +153,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis-service
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   type: ClusterIP
   ports:
@@ -166,7 +167,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   replicas: 1
   selector:
@@ -214,7 +215,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: redis-data-pvc
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 spec:
   accessModes:
     - ReadWriteOnce
@@ -228,7 +229,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: app-config
-  namespace: mcp-gateway-adapter
+  namespace: adapter
 data:
   ContainerRegistrySettings__Endpoint: "kamalberrybytes"
 
@@ -256,7 +257,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: mcpgateway-sa
-    namespace: mcp-gateway-adapter
+    namespace: adapter
 roleRef:
   kind: ClusterRole
   name: app-manager-cluster
