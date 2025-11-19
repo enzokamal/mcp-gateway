@@ -128,8 +128,32 @@ check_screen() {
 # ----------------------------------------------------------
 # 8. Port-forward in screen
 # ----------------------------------------------------------
+# ----------------------------------------------------------
+# 8. Port-forward in screen (run ONLY when pods are ready)
+# ----------------------------------------------------------
 port_forward_service() {
+
+    echo "Checking if all pods in namespace '$NAMESPACE' are running before starting port-forward..."
+
+    # extra safety → ensure all pods Running
+    while true; do
+        NOT_RUNNING=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | awk '$3!="Running" {print $3}')
+        if [ -z "$NOT_RUNNING" ]; then
+            echo "All pods are running."
+            break
+        else
+            echo "Pods not ready yet: $NOT_RUNNING. Waiting..."
+            sleep 5
+        fi
+    done
+
+    # Wait a few seconds before starting port-forward
+    SLEEP_BEFORE_FORWARD=10
+    echo "Waiting ${SLEEP_BEFORE_FORWARD}s before starting port-forward..."
+    sleep "$SLEEP_BEFORE_FORWARD"
+
     echo "Ensuring port-forward for '$SERVICE_NAME'..."
+
     if screen -list | grep -q "$SCREEN_SESSION"; then
         if pgrep -f "kubectl port-forward.*$SERVICE_NAME" >/dev/null; then
             echo "Port-forward already running."
@@ -138,7 +162,10 @@ port_forward_service() {
             screen -S "$SCREEN_SESSION" -X quit
         fi
     fi
-    screen -dmS "$SCREEN_SESSION" bash -c "while true; do kubectl port-forward svc/$SERVICE_NAME -n $NAMESPACE 8000:8000 --address 0.0.0.0; sleep 5; done"
+
+    screen -dmS "$SCREEN_SESSION" bash -c \
+        "while true; do kubectl port-forward svc/$SERVICE_NAME -n $NAMESPACE 8000:8000 --address 0.0.0.0; sleep 5; done"
+
     echo "Port-forward started in screen session '$SCREEN_SESSION'."
 }
 
@@ -179,4 +206,3 @@ port_forward_service
 send_post_request
 
 echo "Setup completed successfully!"
-
