@@ -13,7 +13,7 @@ namespace Microsoft.McpGateway.Management.Deployment
 {
     public class KubernetesAdapterDeploymentManager : IAdapterDeploymentManager
     {
-        private const string AdapterNamespace = "mcp-gateway-adapter";
+        private const string AdapterNamespace = "adapter";
         private readonly IKubeClientWrapper _kubeClient;
         private readonly string _containerRegistryAddress;
         private readonly ILogger<KubernetesAdapterDeploymentManager> _logger;
