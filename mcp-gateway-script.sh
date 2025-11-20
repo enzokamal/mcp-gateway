@@ -148,7 +148,7 @@ port_forward_service() {
     done
 
     # Wait a few seconds before starting port-forward
-    SLEEP_BEFORE_FORWARD=10
+    SLEEP_BEFORE_FORWARD=45
     echo "Waiting ${SLEEP_BEFORE_FORWARD}s before starting port-forward..."
     sleep "$SLEEP_BEFORE_FORWARD"
 

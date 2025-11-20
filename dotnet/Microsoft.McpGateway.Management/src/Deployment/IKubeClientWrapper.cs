@@ -66,5 +66,7 @@ namespace Microsoft.McpGateway.Management.Deployment
         /// Creates or updates a Kubernetes StatefulSet.
         /// </summary>
         Task<V1StatefulSet> UpsertStatefulSetAsync(V1StatefulSet statefulSet, string? ns = null, CancellationToken cancellationToken = default);
+        Task<V1Secret> UpsertSecretAsync(V1Secret secret, string? ns = null, CancellationToken cancellationToken = default);
+
     }
 }

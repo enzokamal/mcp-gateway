@@ -3,13 +3,24 @@
 
 using k8s;
 using k8s.Models;
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Microsoft.McpGateway.Management.Deployment
 {
-    public class KubeClient(IKubernetesClientFactory kubernetesClientFactory, string defaultNamespace = "default") : IKubeClientWrapper
+    public class KubeClient : IKubeClientWrapper
     {
-        private readonly string _defaultNamespace = defaultNamespace ?? throw new ArgumentNullException(nameof(defaultNamespace));
-        private readonly Lazy<Task<IKubernetes>> _lazyClient = new(() => kubernetesClientFactory.GetKubernetesClientAsync(default));
+        private readonly string _defaultNamespace;
+        private readonly Lazy<Task<IKubernetes>> _lazyClient;
+
+        public KubeClient(IKubernetesClientFactory kubernetesClientFactory, string defaultNamespace = "default")
+        {
+            _defaultNamespace = defaultNamespace ?? throw new ArgumentNullException(nameof(defaultNamespace));
+            _lazyClient = new(() => kubernetesClientFactory.GetKubernetesClientAsync(default));
+        }
 
         public async Task<V1StatefulSetList> ListStatefulSetsAsync(string? ns = null, CancellationToken cancellationToken = default)
         {
@@ -81,14 +92,41 @@ namespace Microsoft.McpGateway.Management.Deployment
 
             var container = pod.Spec.Containers.FirstOrDefault()?.Name ?? throw new InvalidOperationException("No containers found in the pod.");
 
-            var logStream = await kubeClient.CoreV1.ReadNamespacedPodLogAsync(
+            return await kubeClient.CoreV1.ReadNamespacedPodLogAsync(
                 name,
                 ns ?? _defaultNamespace,
                 container: container,
                 tailLines: tailLines,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
 
-            return logStream;
+        // =========================
+        // ✅ New Secret Methods
+        // =========================
+
+        public async Task<V1Secret> UpsertSecretAsync(V1Secret secret, string? ns = null, CancellationToken cancellationToken = default)
+        {
+            var kubeClient = await _lazyClient.Value.ConfigureAwait(false);
+            ns ??= _defaultNamespace;
+
+            try
+            {
+                // Try to get existing secret
+                var existing = await kubeClient.CoreV1.ReadNamespacedSecretAsync(secret.Metadata.Name, ns, cancellationToken: cancellationToken).ConfigureAwait(false);
+                secret.Metadata.ResourceVersion = existing.Metadata.ResourceVersion;
+                return await kubeClient.CoreV1.ReplaceNamespacedSecretAsync(secret, secret.Metadata.Name, ns, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Secret does not exist → create it
+                return await kubeClient.CoreV1.CreateNamespacedSecretAsync(secret, ns, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<V1Secret> ReadSecretAsync(string name, string? ns = null, CancellationToken cancellationToken = default)
+        {
+            var kubeClient = await _lazyClient.Value.ConfigureAwait(false);
+            return await kubeClient.CoreV1.ReadNamespacedSecretAsync(name, ns ?? _defaultNamespace, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 }
