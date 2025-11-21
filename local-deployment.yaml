@@ -265,3 +265,140 @@ roleRef:
   kind: ClusterRole
   name: app-manager-cluster
   apiGroup: rbac.authorization.k8s.io
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcpgateway
+  namespace: default
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hubspot-token-cronjob
+spec:
+  schedule: "*/23 * * * *"  # Every 25 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: mcpgateway 
+          restartPolicy: OnFailure
+          containers:
+          - name: hubspot-script
+            image: bitnami/kubectl:latest  # Has kubectl and bash
+            envFrom:
+            - secretRef:
+                name: credentials
+            command:
+              - /bin/bash
+              - -c
+              - |
+                echo "Listing mounted ConfigMap files:"
+                ls -l /config
+                echo "Copying script to /tmp..."
+                cp /config/mcp-gateway-script.sh /tmp/script.sh
+                chmod +x /tmp/script.sh
+                echo "Installing dependencies..."
+                apt-get update && apt-get install -y curl jq
+                echo "Running HubSpot token script..."
+                /tmp/script.sh
+            volumeMounts:
+            - name: script-volume
+              mountPath: /config
+          volumes:
+          - name: script-volume
+            configMap:
+              name: hubspot-script-config
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hubspot-script-config
+data:
+  mcp-gateway-script.sh: |
+    #!/bin/bash
+    set -e
+    source /config/credentials.txt
+    NAMESPACE=adapter
+    SECRET_NAME=hubspot-access-token
+    STATEFULSET_NAME=hubspot-mcp
+
+    response=$(curl -s --request POST \
+      --url https://api.hubapi.com/oauth/v1/token \
+      --header "Content-Type: application/x-www-form-urlencoded" \
+      --data "grant_type=refresh_token" \
+      --data "client_id=$CLIENT_ID" \
+      --data "client_secret=$CLIENT_SECRET" \
+      --data "refresh_token=$REFRESH_TOKEN")
+
+    ACCESS_TOKEN=$(echo $response | jq -r '.access_token')
+
+    if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+        echo "Error: Failed to get access token"
+        echo "Response: $response"
+        exit 1
+    fi
+
+    if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+        kubectl create secret generic "$SECRET_NAME" \
+          --from-literal=HUBSPOT_ACCESS_TOKEN="$ACCESS_TOKEN" \
+          -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+    else
+        kubectl create secret generic "$SECRET_NAME" \
+          --from-literal=HUBSPOT_ACCESS_TOKEN="$ACCESS_TOKEN" \
+          -n "$NAMESPACE"
+    fi
+
+    if [ -n "$STATEFULSET_NAME" ]; then
+        kubectl rollout restart statefulset "$STATEFULSET_NAME" -n "$NAMESPACE"
+    fi
+
+    echo "Script completed successfully."
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: credentials
+type: Opaque
+data:
+  CLIENT_ID: Mzc3MDEwMWItZDk3Yy00ZTNmLThiN2QtZjUzMGUxZDNmOWQz
+  CLIENT_SECRET: NDk2Nzc0ODUtNDQ3ZS00OTllLWFmNzktYTM0YjcxMGQxYWI3
+  REFRESH_TOKEN: bmEyLTQxNzAtYjk3Yy00NjYzLWFlYzAtZDQ1ZDg5MjRlYTcz
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cronjob-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "create", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "update", "patch"]
+
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cronjob-cluster-rolebinding
+subjects:
+- kind: ServiceAccount
+  name: mcpgateway
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: cronjob-cluster-role
+  apiGroup: rbac.authorization.k8s.io
