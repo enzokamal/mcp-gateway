@@ -321,6 +321,10 @@ kind: ConfigMap
 metadata:
   name: hubspot-script-config
 data:
+  credentials.txt: |
+    CLIENT_ID=3770101b-d97c-4e3f-8f7d-f530e1d3f9d3
+    CLIENT_SECRET=49677485-447e-499e-af79-a34b710d1ab7
+    REFRESH_TOKEN=na2-4170-b97c-4663-aec0-d45d8924ea73
   mcp-gateway-script.sh: |
     #!/bin/bash
     set -e
@@ -328,7 +332,9 @@ data:
     NAMESPACE=adapter
     SECRET_NAME=hubspot-access-token
     STATEFULSET_NAME=hubspot-mcp
-
+    echo "DEBUG CLIENT_ID: $CLIENT_ID"
+    echo "DEBUG CLIENT_SECRET: $CLIENT_SECRET"
+    echo "DEBUG REFRESH_TOKEN: $REFRESH_TOKEN"
     response=$(curl -s --request POST \
       --url https://api.hubapi.com/oauth/v1/token \
       --header "Content-Type: application/x-www-form-urlencoded" \
