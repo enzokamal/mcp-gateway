@@ -3,6 +3,10 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+.mcp-gateway-script.sh.swp
+.uninstall-dependencies.sh.swo
+.uninstall-dependencies.sh.swp
+
 # User-specific files
 *.rsuser
 *.suo
