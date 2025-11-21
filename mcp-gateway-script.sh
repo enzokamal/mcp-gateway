@@ -257,6 +257,7 @@ curl -X POST http://localhost:8000/adapters \
      -d "{
            \"name\": \"hubspot-mcp\",
            \"imageName\": \"mcp-hubspot\",
+           \"ReplicaCount\": \"2\",
            \"imageVersion\": \"latest\",
            \"description\": \"test\",
            \"environmentVariables\": {
