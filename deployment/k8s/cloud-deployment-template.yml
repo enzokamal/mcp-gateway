@@ -6,6 +6,54 @@ metadata:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: redis
+  namespace: adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: adapter
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: mcpgateway
   namespace: adapter
 spec:
@@ -22,7 +70,7 @@ spec:
       serviceAccountName: mcpgateway-sa
       containers:
         - name: mcpgateway-container
-          image: ghcr.io/microsoft/mcp-gateway:latest
+          image: kamalberrybytes/microsoft-mcpgateway-service
           ports:
             - containerPort: 8000
           env:
@@ -62,7 +110,7 @@ metadata:
   name: mcpgateway-sa
   namespace: adapter
   annotations:
-    azure.workload.identity/client-id: "${AZURE_CLIENT_ID}"
+    azure.workload.identity/client-id: "11ddc0cd-e6fc-48b6-8832-de61800fb41e"
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -70,7 +118,7 @@ metadata:
   name: workload-sa
   namespace: adapter
   annotations:
-    azure.workload.identity/client-id: "${WORKLOAD_CLIENT_ID}"
+    azure.workload.identity/client-id: "11ddc0cd-e6fc-48b6-8832-de61800fb41e"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -109,18 +157,20 @@ metadata:
   namespace: adapter
 data:
   AzureAd__Instance: "https://login.microsoftonline.com/"
-  AzureAd__TenantId: "${TENANT_ID}"
-  AzureAd__ClientId: "${CLIENT_ID}"
-  AzureAd__Audience: "${CLIENT_ID}"
+  AzureAd__TenantId: "6ba231bb-ad9e-41b9-b23d-674c80196bbd"
+  AzureAd__ClientId: "11ddc0cd-e6fc-48b6-8832-de61800fb41e"
+  AzureAd__Audience: "11ddc0cd-e6fc-48b6-8832-de61800fb41e"
 
-  CosmosSettings__AccountEndpoint: "https://mg-storage-${IDENTIFIER}.documents.azure.com:443/"
-  CosmosSettings__DatabaseName: "McpGatewayDb"
+  # CosmosSettings__AccountEndpoint: "https://mg-storage-${IDENTIFIER}.documents.azure.com:443/"
+  # CosmosSettings__DatabaseName: "McpGatewayDb"
 
-  ApplicationInsights__ConnectionString: "${APPINSIGHTS_CONNECTION_STRING}"
+  # ApplicationInsights__ConnectionString: "${APPINSIGHTS_CONNECTION_STRING}"
 
-  ContainerRegistrySettings__Endpoint: "mgreg${IDENTIFIER}.azurecr.io"
+  ContainerRegistrySettings__Endpoint: "kamalberrybytes"
 
-  PublicOrigin: "http://${IDENTIFIER}.${REGION}.cloudapp.azure.com/"
+  PublicOrigin: "http://40.90.239.128:8000/"
+  
+  Redis__ConnectionString: "redis:6379"
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -143,7 +193,7 @@ spec:
       serviceAccountName: mcpgateway-sa
       containers:
         - name: toolgateway-container
-          image: ghcr.io/microsoft/tool-gateway:latest
+          image: kamalberrybytes/microsoft-mcpgateway-tools
           ports:
             - containerPort: 8000
           env:
