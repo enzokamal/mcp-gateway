@@ -1,11 +1,4 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT License.
-
-using Azure.Identity;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.Azure.Cosmos;
-using Microsoft.Azure.Cosmos.Fluent;
 using Microsoft.Identity.Web;
 using Microsoft.McpGateway.Management.Authorization;
 using Microsoft.McpGateway.Management.Deployment;
@@ -13,125 +6,136 @@ using Microsoft.McpGateway.Management.Service;
 using Microsoft.McpGateway.Management.Store;
 using Microsoft.McpGateway.Service.Authentication;
 using Microsoft.McpGateway.Service.Routing;
-using Microsoft.McpGateway.Service.Session;
-using ModelContextProtocol.AspNetCore.Authentication;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
-var credential = new DefaultAzureCredential();
 
-builder.Services.AddApplicationInsightsTelemetry();
+// ------------------------
+// Logging
+// ------------------------
 builder.Services.AddLogging();
 
+// ------------------------
+// Kubernetes Services
+// ------------------------
 builder.Services.AddSingleton<IKubernetesClientFactory, LocalKubernetesClientFactory>();
-builder.Services.AddSingleton<IAdapterSessionStore, DistributedMemorySessionStore>();
-builder.Services.AddSingleton<IServiceNodeInfoProvider, AdapterKubernetesNodeInfoProvider>();
-builder.Services.AddSingleton<ISessionRoutingHandler, AdapterSessionRoutingHandler>();
 
+// ------------------------
+// Authentication & Redis
+// ------------------------
 if (builder.Environment.IsDevelopment())
 {
+    // Development authentication
     builder.Services
         .AddAuthentication(DevelopmentAuthenticationHandler.SchemeName)
-        .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(DevelopmentAuthenticationHandler.SchemeName, null);
+        .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
+            DevelopmentAuthenticationHandler.SchemeName, null);
 
+    // Redis cache for development
     var redisConnection = builder.Configuration.GetValue<string>("Redis:ConnectionString") ?? "localhost:6379";
-    builder.Services.AddStackExchangeRedisCache(options =>
+    
+    try
     {
-        options.Configuration = redisConnection;
-        options.InstanceName = "mcpgateway:";
-    });
+        builder.Services.AddStackExchangeRedisCache(options =>
+        {
+            options.Configuration = redisConnection;
+            options.InstanceName = "mcpgateway:";
+            options.ConfigurationOptions = StackExchange.Redis.ConfigurationOptions.Parse(redisConnection);
+            options.ConfigurationOptions.ConnectTimeout = 10000;
+            options.ConfigurationOptions.SyncTimeout = 10000;
+            options.ConfigurationOptions.AbortOnConnectFail = false;
+        });
 
-    builder.Services.AddSingleton<IAdapterResourceStore, RedisAdapterResourceStore>();
-    builder.Services.AddSingleton<IToolResourceStore, RedisToolResourceStore>();
+        builder.Services.AddSingleton<IAdapterResourceStore, RedisAdapterResourceStore>();
+        builder.Services.AddSingleton<IToolResourceStore, RedisToolResourceStore>();
+    }
+    catch (Exception ex)
+    {
+        builder.Logging.AddConsole().AddDebug();
+        var logger = LoggerFactory.Create(config => config.AddConsole()).CreateLogger("Startup");
+        logger.LogWarning(ex, "Failed to connect to Redis. Using in-memory cache instead.");
+        
+        // Fallback to in-memory cache
+        builder.Services.AddDistributedMemoryCache();
+        builder.Services.AddSingleton<IAdapterResourceStore, InMemoryAdapterResourceStore>();
+        builder.Services.AddSingleton<IToolResourceStore, InMemoryToolResourceStore>();
+    }
 
     builder.Logging.AddConsole();
     builder.Logging.SetMinimumLevel(LogLevel.Debug);
 }
 else
 {
+    // Production: standard Azure AD / OIDC authentication
     var azureAdConfig = builder.Configuration.GetSection("AzureAd");
-    builder.Services.AddAuthentication(options =>
-    {
-        options.DefaultChallengeScheme = McpAuthenticationDefaults.AuthenticationScheme;
-        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    })
-    .AddScheme<McpAuthenticationOptions, McpSubPathAwareAuthenticationHandler>(
-        McpAuthenticationDefaults.AuthenticationScheme,
-        McpAuthenticationDefaults.DisplayName,
-    options =>
-    {
-        options.ResourceMetadata = new()
-        {
-            Resource = new Uri(builder.Configuration.GetValue<string>("PublicOrigin")!),
-            AuthorizationServers = { new Uri($"https://login.microsoftonline.com/{azureAdConfig["TenantId"]}/v2.0") },
-            ScopesSupported = [$"api://{azureAdConfig["ClientId"]}/.default"]
-        };
-    })
-    .AddMicrosoftIdentityWebApi(azureAdConfig);
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddMicrosoftIdentityWebApi(azureAdConfig);
 
-    // Create CosmosClient with credential-based authentication
-    var cosmosConfig = builder.Configuration.GetSection("CosmosSettings");
-    var cosmosClient = new CosmosClient(
-        cosmosConfig["AccountEndpoint"], 
-        credential, 
-        new CosmosClientOptions
-        {
-            Serializer = new CosmosSystemTextJsonSerializer(new JsonSerializerOptions
-            {
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-            })
-        });
-
-    builder.Services.AddSingleton<IAdapterResourceStore>(sp =>
-    {
-        var logger = sp.GetRequiredService<ILogger<CosmosAdapterResourceStore>>();
-        return new CosmosAdapterResourceStore(cosmosClient, cosmosConfig["DatabaseName"]!, "AdapterContainer", logger);
-    });
-
-    builder.Services.AddSingleton<IToolResourceStore>(sp =>
-    {
-        var logger = sp.GetRequiredService<ILogger<CosmosToolResourceStore>>();
-        return new CosmosToolResourceStore(cosmosClient, cosmosConfig["DatabaseName"]!, "ToolContainer", logger);
-    });
+    // Redis cache for production
+    var redisConnection = builder.Configuration.GetValue<string>("Redis:ConnectionString") ?? "redis:6379";
     
-    builder.Services.AddCosmosCache(options =>
+    builder.Services.AddStackExchangeRedisCache(options =>
     {
-        options.ContainerName = "CacheContainer";
-        options.DatabaseName = cosmosConfig["DatabaseName"]!;
-        options.CreateIfNotExists = true;
-        options.ClientBuilder = new CosmosClientBuilder(cosmosConfig["AccountEndpoint"], credential);
+        options.Configuration = redisConnection;
+        options.InstanceName = "mcpgateway:";
+        options.ConfigurationOptions = StackExchange.Redis.ConfigurationOptions.Parse(redisConnection);
+        options.ConfigurationOptions.ConnectTimeout = 10000;
+        options.ConfigurationOptions.SyncTimeout = 10000;
+        options.ConfigurationOptions.AbortOnConnectFail = false;
+        options.ConfigurationOptions.ConnectRetry = 3;
     });
+
+    builder.Services.AddSingleton<IAdapterResourceStore, RedisAdapterResourceStore>();
+    builder.Services.AddSingleton<IToolResourceStore, RedisToolResourceStore>();
 }
 
+// ------------------------
+// MCP Gateway Services
+// ------------------------
 builder.Services.AddSingleton<IKubeClientWrapper>(c =>
 {
     var kubeClientFactory = c.GetRequiredService<IKubernetesClientFactory>();
     return new KubeClient(kubeClientFactory, "adapter");
 });
+
 builder.Services.AddSingleton<IPermissionProvider, SimplePermissionProvider>();
+
 builder.Services.AddSingleton<IAdapterDeploymentManager>(c =>
 {
     var config = builder.Configuration.GetSection("ContainerRegistrySettings");
-    return new KubernetesAdapterDeploymentManager(config["Endpoint"]!, c.GetRequiredService<IKubeClientWrapper>(), c.GetRequiredService<ILogger<KubernetesAdapterDeploymentManager>>());
+    return new KubernetesAdapterDeploymentManager(
+        config["Endpoint"]!, 
+        c.GetRequiredService<IKubeClientWrapper>(), 
+        c.GetRequiredService<ILogger<KubernetesAdapterDeploymentManager>>());
 });
+
 builder.Services.AddSingleton<IAdapterManagementService, AdapterManagementService>();
 builder.Services.AddSingleton<IToolManagementService, ToolManagementService>();
 builder.Services.AddSingleton<IAdapterRichResultProvider, AdapterRichResultProvider>();
 
+// ------------------------
+// Authorization & Controllers
+// ------------------------
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 builder.Services.AddHttpClient();
 
+// ------------------------
+// Kestrel
+// ------------------------
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.ListenAnyIP(8000);
 });
 
+// ------------------------
+// Build & Run
+// ------------------------
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+
 await app.RunAsync();

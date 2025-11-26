@@ -22,46 +22,66 @@ builder.Services.AddSingleton<IPermissionProvider, SimplePermissionProvider>();
 // Add HttpClient for tool execution
 builder.Services.AddHttpClient();
 
-// Configure tool resource store and tool definition provider
-if (builder.Environment.IsDevelopment())
-{
-    var redisConnection = builder.Configuration.GetValue<string>("Redis:ConnectionString") ?? "localhost:6379";
-    builder.Services.AddStackExchangeRedisCache(options =>
-    {
-        options.Configuration = redisConnection;
-        options.InstanceName = "mcpgateway:";
-    });
+// // Configure tool resource store and tool definition provider
+// if (builder.Environment.IsDevelopment())
+// {
+//     var redisConnection = builder.Configuration.GetValue<string>("Redis:ConnectionString") ?? "localhost:6379";
+//     builder.Services.AddStackExchangeRedisCache(options =>
+//     {
+//         options.Configuration = redisConnection;
+//         options.InstanceName = "mcpgateway:";
+//     });
     
-    // Use Redis-backed store that can be shared with the gateway service
-    builder.Services.AddSingleton<IToolResourceStore, RedisToolResourceStore>();
+//     // Use Redis-backed store that can be shared with the gateway service
+//     builder.Services.AddSingleton<IToolResourceStore, RedisToolResourceStore>();
     
-    builder.Logging.AddConsole();
-    builder.Logging.SetMinimumLevel(LogLevel.Debug);
-}
-else
-{
-    // In production, use Cosmos DB store
-    var config = builder.Configuration.GetSection("CosmosSettings");
-    var credential = new DefaultAzureCredential();
-    var cosmosClient = new CosmosClient(config["AccountEndpoint"], credential, new CosmosClientOptions
-    {
-        Serializer = new CosmosSystemTextJsonSerializer(new JsonSerializerOptions
-        {
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        })
-    });
+//     builder.Logging.AddConsole();
+//     builder.Logging.SetMinimumLevel(LogLevel.Debug);
+// }
+// else
+// {
+//     // In production, use Cosmos DB store
+//     var config = builder.Configuration.GetSection("CosmosSettings");
+//     var credential = new DefaultAzureCredential();
+//     var cosmosClient = new CosmosClient(config["AccountEndpoint"], credential, new CosmosClientOptions
+//     {
+//         Serializer = new CosmosSystemTextJsonSerializer(new JsonSerializerOptions
+//         {
+//             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+//         })
+//     });
 
-    // Register IToolResourceStore
-    builder.Services.AddSingleton<IToolResourceStore>(sp =>
-    {
-        var logger = sp.GetRequiredService<ILogger<CosmosToolResourceStore>>();
-        return new CosmosToolResourceStore(
-            cosmosClient,
-            config["DatabaseName"]!,
-            "ToolContainer",
-            logger);
-    });
-}
+//     // Register IToolResourceStore
+//     builder.Services.AddSingleton<IToolResourceStore>(sp =>
+//     {
+//         var logger = sp.GetRequiredService<ILogger<CosmosToolResourceStore>>();
+//         return new CosmosToolResourceStore(
+//             cosmosClient,
+//             config["DatabaseName"]!,
+//             "ToolContainer",
+//             logger);
+//     });
+// }
+
+
+// Configure tool resource store and tool definition provider
+var redisConnection = builder.Configuration.GetValue<string>("Redis:ConnectionString") 
+                      ?? "localhost:6379";
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnection;
+    options.InstanceName = "mcpgateway:";
+});
+
+// Always use Redis-backed store
+builder.Services.AddSingleton<IToolResourceStore, RedisToolResourceStore>();
+
+// Logging
+builder.Logging.AddConsole();
+builder.Logging.SetMinimumLevel(
+    builder.Environment.IsDevelopment() ? LogLevel.Debug : LogLevel.Information
+);
 
 // Register IToolDefinitionProvider using the store
 builder.Services.AddSingleton<IToolDefinitionProvider, StorageToolDefinitionProvider>();
